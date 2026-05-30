@@ -145,24 +145,54 @@ def populate_card_nodes(session: Session, card_lookup: dict, card_names: list[st
 
 
 # ---------------------------------------------------------------------------
-# Deck nodes and relationships  (stubs — implement in archidekt.py)
+# Deck nodes and relationships
 # ---------------------------------------------------------------------------
 
 def upsert_deck_node(session: Session, deck: dict) -> None:
-    """MERGE a Deck node. Expected keys: deck_id, name, format, url.
+    """MERGE a Deck node. Expected keys: deck_id, name, format, url."""
+    session.run(
+        """
+        MERGE (d:Deck {deck_id: $deck_id})
+        SET d.name   = $name,
+            d.format = $format,
+            d.url    = $url
+        """,
+        deck_id=deck["deck_id"],
+        name=deck["name"],
+        format=deck.get("format", ""),
+        url=deck.get("url", ""),
+    )
 
-    Stub — call from archidekt.py after that module is built.
+
+def link_cards_to_deck_batch(session: Session, deck_id: str, cards: list[dict]) -> None:
+    """MERGE IN_DECK relationships for a full deck in one query.
+
+    Each card dict requires: scryfall_id, quantity, is_commander.
+    Cards whose Card node doesn't exist in the graph are silently skipped
+    (MATCH finds nothing → UNWIND row produces no result).
     """
-    raise NotImplementedError("upsert_deck_node: implement when archidekt.py is ready")
+    session.run(
+        """
+        UNWIND $cards AS card
+        MATCH (c:Card {scryfall_id: card.scryfall_id})
+        MATCH (d:Deck {deck_id: $deck_id})
+        MERGE (c)-[r:IN_DECK]->(d)
+        SET r.quantity     = card.quantity,
+            r.is_commander = card.is_commander
+        """,
+        deck_id=deck_id,
+        cards=cards,
+    )
 
 
 def link_card_to_deck(session: Session, scryfall_id: str, deck_id: str,
                       quantity: int, is_commander: bool = False) -> None:
-    """Create or update an IN_DECK relationship between a Card and a Deck.
-
-    Stub — call from archidekt.py after that module is built.
-    """
-    raise NotImplementedError("link_card_to_deck: implement when archidekt.py is ready")
+    """MERGE a single IN_DECK relationship. Prefer link_cards_to_deck_batch for full decks."""
+    link_cards_to_deck_batch(session, deck_id, [{
+        "scryfall_id": scryfall_id,
+        "quantity": quantity,
+        "is_commander": is_commander,
+    }])
 
 
 # ---------------------------------------------------------------------------
