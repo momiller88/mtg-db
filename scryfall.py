@@ -92,9 +92,12 @@ def build_card_lookup() -> dict[str, dict]:
     return lookup
 
 
-def populate_card_nodes(neo4j_session, card_names: list[str]) -> None:
-    """Stub — populate Neo4j card nodes for the given card names.
+def populate_card_nodes(neo4j_session, card_names: list[str]) -> int:
+    """Populate Neo4j Card nodes for the given card names.
 
-    Implement after neo4j_ops.py is built.
+    Fetches (or uses cached) Scryfall bulk data, then delegates to neo4j_ops.
     """
-    raise NotImplementedError("populate_card_nodes: implement after neo4j_ops.py")
+    from neo4j_ops import populate_card_nodes as _populate
+
+    lookup = build_card_lookup()
+    return _populate(neo4j_session, lookup, card_names)
