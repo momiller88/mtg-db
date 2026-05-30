@@ -10,6 +10,15 @@ from config import CACHE_DIR, SCRYFALL_BULK, SCRYFALL_BULK_MAX_AGE_DAYS, SCRYFAL
 
 log = logging.getLogger(__name__)
 
+# Scryfall uses U+A789 MODIFIER LETTER COLON in some card names (e.g. Ratonhnhaké:ton).
+# ManaBox exports the same names with a regular U+003A COLON. Normalise to ASCII
+# so lookups match regardless of which source the name came from.
+_COLON_VARIANTS = str.maketrans("꞉", ":")
+
+
+def normalize_name(name: str) -> str:
+    return name.translate(_COLON_VARIANTS)
+
 
 def _bulk_is_fresh() -> bool:
     if not SCRYFALL_BULK.exists():
@@ -74,7 +83,7 @@ def build_card_lookup() -> dict[str, dict]:
                 face.get("oracle_text", "") for face in card["card_faces"]
             )
 
-        lookup[name] = {
+        lookup[normalize_name(name)] = {
             "scryfall_id": card.get("id"),
             "mana_cost": card.get("mana_cost"),
             "cmc": card.get("cmc"),
