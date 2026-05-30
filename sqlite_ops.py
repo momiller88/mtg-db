@@ -30,18 +30,25 @@ def init_db(db_path: Path = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS collection (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                scryfall_id      TEXT NOT NULL,
-                name             TEXT NOT NULL,
-                set_code         TEXT,
-                collector_number TEXT,
-                foil             INTEGER NOT NULL DEFAULT 0,
-                condition        TEXT,
-                language         TEXT,
-                quantity         INTEGER NOT NULL DEFAULT 1,
-                purchase_price   REAL,
-                date_added       TEXT NOT NULL,
-                date_updated     TEXT NOT NULL,
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                scryfall_id             TEXT NOT NULL,
+                name                    TEXT NOT NULL,
+                set_code                TEXT,
+                set_name                TEXT,
+                collector_number        TEXT,
+                foil                    INTEGER NOT NULL DEFAULT 0,
+                rarity                  TEXT,
+                condition               TEXT,
+                language                TEXT,
+                quantity                INTEGER NOT NULL DEFAULT 1,
+                purchase_price          REAL,
+                purchase_price_currency TEXT,
+                manabox_id              TEXT,
+                misprint                INTEGER NOT NULL DEFAULT 0,
+                altered                 INTEGER NOT NULL DEFAULT 0,
+                manabox_date_added      TEXT,
+                date_added              TEXT NOT NULL,
+                date_updated            TEXT NOT NULL,
                 UNIQUE (scryfall_id, foil, condition, language)
             );
 
@@ -57,13 +64,21 @@ def init_db(db_path: Path = DB_PATH) -> None:
     log.info("Database initialised at %s", db_path)
 
 
+# Fields compared to detect whether an existing row needs updating.
+_MUTABLE_FIELDS = (
+    "quantity", "purchase_price", "purchase_price_currency",
+    "misprint", "altered", "set_name", "rarity", "manabox_id", "manabox_date_added",
+)
+
+
 def upsert_collection_row(conn: sqlite3.Connection, row: dict) -> str:
     """Insert or update a collection row. Returns 'added', 'updated', or 'unchanged'."""
     now = datetime.now(timezone.utc).isoformat()
 
     existing = conn.execute(
         """
-        SELECT id, quantity, purchase_price, condition, language
+        SELECT id, quantity, purchase_price, purchase_price_currency,
+               misprint, altered, set_name, rarity, manabox_id, manabox_date_added
         FROM collection
         WHERE scryfall_id = ? AND foil = ? AND condition = ? AND language = ?
         """,
@@ -73,34 +88,40 @@ def upsert_collection_row(conn: sqlite3.Connection, row: dict) -> str:
     if existing is None:
         conn.execute(
             """
-            INSERT INTO collection
-                (scryfall_id, name, set_code, collector_number, foil,
-                 condition, language, quantity, purchase_price, date_added, date_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO collection (
+                scryfall_id, name, set_code, set_name, collector_number, foil,
+                rarity, condition, language, quantity, purchase_price,
+                purchase_price_currency, manabox_id, misprint, altered,
+                manabox_date_added, date_added, date_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                row["scryfall_id"], row["name"], row["set_code"],
-                row["collector_number"], row["foil"], row["condition"],
+                row["scryfall_id"], row["name"], row["set_code"], row["set_name"],
+                row["collector_number"], row["foil"], row["rarity"], row["condition"],
                 row["language"], row["quantity"], row["purchase_price"],
-                now, now,
+                row["purchase_price_currency"], row["manabox_id"], row["misprint"],
+                row["altered"], row["manabox_date_added"], now, now,
             ),
         )
         return "added"
 
-    changed = (
-        existing["quantity"] != row["quantity"]
-        or existing["purchase_price"] != row["purchase_price"]
-    )
+    changed = any(existing[f] != row[f] for f in _MUTABLE_FIELDS)
     if not changed:
         return "unchanged"
 
     conn.execute(
         """
         UPDATE collection
-        SET quantity = ?, purchase_price = ?, date_updated = ?
+        SET quantity = ?, purchase_price = ?, purchase_price_currency = ?,
+            misprint = ?, altered = ?, set_name = ?, rarity = ?,
+            manabox_id = ?, manabox_date_added = ?, date_updated = ?
         WHERE id = ?
         """,
-        (row["quantity"], row["purchase_price"], now, existing["id"]),
+        (
+            row["quantity"], row["purchase_price"], row["purchase_price_currency"],
+            row["misprint"], row["altered"], row["set_name"], row["rarity"],
+            row["manabox_id"], row["manabox_date_added"], now, existing["id"],
+        ),
     )
     return "updated"
 
