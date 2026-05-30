@@ -196,20 +196,46 @@ def link_card_to_deck(session: Session, scryfall_id: str, deck_id: str,
 
 
 # ---------------------------------------------------------------------------
-# Combo nodes and relationships  (stubs — implement in spellbook.py)
+# Combo nodes and relationships
 # ---------------------------------------------------------------------------
 
-def upsert_combo_node(session: Session, combo: dict) -> None:
-    """MERGE a Combo node. Expected keys: combo_id, description, results.
+def upsert_combo_nodes_batch(session: Session, combos: list[dict]) -> None:
+    """MERGE a batch of Combo nodes using UNWIND.
 
-    Stub — call from spellbook.py after that module is built.
+    Each combo dict requires: combo_id, results, description, prerequisites, color_identity.
     """
-    raise NotImplementedError("upsert_combo_node: implement when spellbook.py is ready")
+    session.run(
+        """
+        UNWIND $combos AS combo
+        MERGE (x:Combo {combo_id: combo.combo_id})
+        SET x.results        = combo.results,
+            x.description    = combo.description,
+            x.prerequisites  = combo.prerequisites,
+            x.color_identity = combo.color_identity
+        """,
+        combos=combos,
+    )
+
+
+def upsert_combo_node(session: Session, combo: dict) -> None:
+    """MERGE a single Combo node. Prefer upsert_combo_nodes_batch for bulk work."""
+    upsert_combo_nodes_batch(session, [combo])
+
+
+def link_cards_to_combo_batch(session: Session, combo_id: str, scryfall_ids: list[str]) -> None:
+    """MERGE PART_OF_COMBO relationships for all cards in a combo."""
+    session.run(
+        """
+        UNWIND $scryfall_ids AS sid
+        MATCH (c:Card {scryfall_id: sid})
+        MATCH (x:Combo {combo_id: $combo_id})
+        MERGE (c)-[:PART_OF_COMBO]->(x)
+        """,
+        combo_id=combo_id,
+        scryfall_ids=scryfall_ids,
+    )
 
 
 def link_card_to_combo(session: Session, scryfall_id: str, combo_id: str) -> None:
-    """Create a PART_OF_COMBO relationship between a Card and a Combo.
-
-    Stub — call from spellbook.py after that module is built.
-    """
-    raise NotImplementedError("link_card_to_combo: implement when spellbook.py is ready")
+    """MERGE a single PART_OF_COMBO relationship."""
+    link_cards_to_combo_batch(session, combo_id, [scryfall_id])
