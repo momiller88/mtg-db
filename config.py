@@ -8,7 +8,9 @@ SCRYFALL_BULK_URL = "https://api.scryfall.com/bulk-data"
 SCRYFALL_BULK = CACHE_DIR / "scryfall_bulk.json"
 SCRYFALL_BULK_MAX_AGE_DAYS = 7
 
-# Neo4j AuraDB — populate after provisioning
-NEO4J_URI = ""
-NEO4J_USER = ""
-NEO4J_PASSWORD = ""
+DB_PATH = BASE_DIR / "mtg_collection.db"
+
+# Neo4j AuraDB
+NEO4J_URI = "neo4j+s://bfa0085d.databases.neo4j.io"
+NEO4J_USER = "neo4j"
+NEO4J_PASSWORD = ""  # fill in before connecting
