@@ -5,7 +5,7 @@ from pathlib import Path
 
 import requests
 
-from config import ARCHIDEKT_BASE_URL, ARCHIDEKT_USERNAME, EXPORTS_DIR
+from config import ARCHIDEKT_BASE_URL, ARCHIDEKT_USERNAME, ARCHIDEKT_PASSWORD, EXPORTS_DIR
 from scryfall import normalize_name
 from neo4j_ops import (
     Session,
@@ -27,10 +27,38 @@ _FORMAT_MAP = {
 _http = requests.Session()
 _http.headers["User-Agent"] = "mtg-db/0.1 (personal collection tool)"
 
+_authenticated = False
+_user_decks: list[dict] = []   # populated from login response
+
 
 # ---------------------------------------------------------------------------
 # API helpers
 # ---------------------------------------------------------------------------
+
+def authenticate(username: str | None = None, password: str | None = None) -> None:
+    """POST credentials to /api/rest-auth/login/, store Bearer JWT, and cache deck list."""
+    global _authenticated, _user_decks
+    username = username or ARCHIDEKT_USERNAME
+    password = password or ARCHIDEKT_PASSWORD
+
+    resp = _http.post(
+        f"{ARCHIDEKT_BASE_URL}/rest-auth/login/",
+        json={"username": username, "password": password},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    token = data.get("access_token") or data.get("token")
+    if not token:
+        raise RuntimeError(f"Login succeeded but no token in response: {list(data.keys())}")
+
+    _http.headers["Authorization"] = f"Bearer {token}"
+    _authenticated = True
+
+    _user_decks = data.get("user", {}).get("decks", [])
+    log.info("Archidekt auth OK — user '%s', %d decks visible", username, len(_user_decks))
+
 
 def _get(path: str, params: dict | None = None) -> dict:
     url = f"{ARCHIDEKT_BASE_URL}{path}"
@@ -45,23 +73,19 @@ def fetch_deck(deck_id: int | str) -> dict:
     return _get(f"/decks/{deck_id}/")
 
 
-def fetch_user_deck_ids(username: str) -> list[int]:
-    """Return all deck IDs owned by username, following pagination."""
-    ids: list[int] = []
-    params: dict = {"owner_username": username, "pageSize": 100}
-    page = 1
+def fetch_user_deck_ids(username: str | None = None, include_private: bool = False) -> list[int]:
+    """Return deck IDs for the authenticated user from the login payload.
 
-    while True:
-        params["p"] = page
-        data = _get("/decks/", params)
-        results = data.get("results", [])
-        ids.extend(d["id"] for d in results)
-        log.info("Deck list page %d — %d decks fetched so far", page, len(ids))
-
-        if not data.get("next"):
-            break
-        page += 1
-
+    Private decks are excluded by default — the API returns 404 for them
+    even when authenticated as the owner.
+    """
+    if not _authenticated:
+        authenticate()
+    decks = _user_decks if include_private else [d for d in _user_decks if not d.get("private")]
+    ids = [d["id"] for d in decks]
+    skipped = len(_user_decks) - len(ids)
+    log.info("Deck IDs from login payload: %d public%s",
+             len(ids), f" ({skipped} private skipped)" if skipped else "")
     return ids
 
 
@@ -84,16 +108,17 @@ def _parse_deck_api(data: dict) -> dict:
     for entry in cards_raw:
         oracle = entry.get("card", {}).get("oracleCard", {})
         name = normalize_name(oracle.get("name", ""))
-        scryfall_id = oracle.get("uid", "")
         quantity = entry.get("quantity", 1)
         categories = [c.lower() for c in entry.get("categories", [])]
         is_commander = "commander" in categories
 
-        if not name or not scryfall_id:
+        if not name:
             continue
 
+        # Archidekt's oracleCard.uid is their internal ID, not Scryfall's.
+        # scryfall_id is resolved at sync time via card_lookup keyed by name.
         cards.append({
-            "scryfall_id": scryfall_id,
+            "scryfall_id": None,
             "name": name,
             "quantity": quantity,
             "is_commander": is_commander,
@@ -241,10 +266,15 @@ def sync_all_decks(session: Session, card_lookup: dict,
 
     results = []
     for deck_id in deck_ids:
-        raw = fetch_deck(deck_id)
-        deck = _parse_deck_api(raw)
-        summary = sync_deck(deck, session, card_lookup)
-        results.append(summary)
+        try:
+            raw = fetch_deck(deck_id)
+            deck = _parse_deck_api(raw)
+            summary = sync_deck(deck, session, card_lookup)
+            results.append(summary)
+        except requests.HTTPError as exc:
+            log.warning("Skipping deck %s — HTTP %s", deck_id, exc.response.status_code)
+        except Exception as exc:
+            log.warning("Skipping deck %s — %s", deck_id, exc)
 
     return results
 
