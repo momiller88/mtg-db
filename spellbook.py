@@ -116,13 +116,19 @@ def _parse_combo(raw: dict) -> dict:
     """Normalise a raw Spellbook variant into a combo dict.
 
     Returns:
-        combo_id, card_names, results, description, prerequisites, color_identity
+        combo_id, card_names, card_oracle_ids, results, description,
+        prerequisites, color_identity
     """
-    card_names = [
-        normalize_name(entry["card"]["name"])
-        for entry in raw.get("uses", [])
-        if entry.get("card", {}).get("name")
-    ]
+    card_names = []
+    card_oracle_ids = []
+    for entry in raw.get("uses", []):
+        card = entry.get("card", {})
+        name = card.get("name")
+        oid  = card.get("oracleId")
+        if name:
+            card_names.append(normalize_name(name))
+        if oid:
+            card_oracle_ids.append(oid)
 
     results = [
         entry["feature"]["name"]
@@ -141,12 +147,13 @@ def _parse_combo(raw: dict) -> dict:
     ])) or None
 
     return {
-        "combo_id":       str(raw["id"]),
-        "card_names":     card_names,
-        "results":        results,
-        "description":    raw.get("description") or None,
-        "prerequisites":  prerequisites,
-        "color_identity": color_identity,
+        "combo_id":        str(raw["id"]),
+        "card_names":      card_names,
+        "card_oracle_ids": card_oracle_ids,
+        "results":         results,
+        "description":     raw.get("description") or None,
+        "prerequisites":   prerequisites,
+        "color_identity":  color_identity,
     }
 
 
@@ -190,24 +197,16 @@ def sync_combos(session: Session, card_lookup: dict) -> dict:
     combo_batch: list[dict] = []
 
     for combo in relevant:
-        # Resolve scryfall_ids for all cards in this combo
-        resolved_ids: list[str] = []
-        for name in combo["card_names"]:
-            data = card_lookup.get(name)
-            if data:
-                resolved_ids.append(data["scryfall_id"])
-            else:
-                log.debug("Combo %s: card '%s' not in lookup", combo["combo_id"], name)
-
-        if not resolved_ids:
+        oracle_ids = combo["card_oracle_ids"]
+        if not oracle_ids:
             skipped += 1
             continue
 
         combo_batch.append({
-            "combo_id":      combo["combo_id"],
-            "results":       combo["results"],
-            "description":   combo["description"],
-            "prerequisites": combo["prerequisites"],
+            "combo_id":       combo["combo_id"],
+            "results":        combo["results"],
+            "description":    combo["description"],
+            "prerequisites":  combo["prerequisites"],
             "color_identity": combo["color_identity"],
         })
 
@@ -216,7 +215,7 @@ def sync_combos(session: Session, card_lookup: dict) -> dict:
             upsert_combo_nodes_batch(session, combo_batch)
             combo_batch = []
 
-        link_cards_to_combo_batch(session, combo["combo_id"], resolved_ids)
+        link_cards_to_combo_batch(session, combo["combo_id"], oracle_ids)
         synced += 1
 
     if combo_batch:

@@ -55,6 +55,7 @@ def ensure_constraints(session: Session) -> None:
         "CREATE CONSTRAINT deck_id IF NOT EXISTS FOR (d:Deck) REQUIRE d.deck_id IS UNIQUE",
         "CREATE CONSTRAINT combo_id IF NOT EXISTS FOR (x:Combo) REQUIRE x.combo_id IS UNIQUE",
         "CREATE INDEX card_name IF NOT EXISTS FOR (c:Card) ON (c.name)",
+        "CREATE INDEX card_oracle_id IF NOT EXISTS FOR (c:Card) ON (c.oracle_id)",
     ]
     for stmt in stmts:
         session.run(stmt)
@@ -71,6 +72,7 @@ def upsert_card_node(session: Session, card: dict) -> None:
         """
         MERGE (c:Card {scryfall_id: $scryfall_id})
         SET c.name                = $name,
+            c.oracle_id           = $oracle_id,
             c.mana_cost           = $mana_cost,
             c.cmc                 = $cmc,
             c.type_line           = $type_line,
@@ -93,6 +95,7 @@ def upsert_card_nodes_batch(session: Session, cards: list[dict]) -> None:
         UNWIND $cards AS card
         MERGE (c:Card {scryfall_id: card.scryfall_id})
         SET c.name           = card.name,
+            c.oracle_id      = card.oracle_id,
             c.mana_cost      = card.mana_cost,
             c.cmc            = card.cmc,
             c.type_line      = card.type_line,
@@ -222,20 +225,20 @@ def upsert_combo_node(session: Session, combo: dict) -> None:
     upsert_combo_nodes_batch(session, [combo])
 
 
-def link_cards_to_combo_batch(session: Session, combo_id: str, scryfall_ids: list[str]) -> None:
-    """MERGE PART_OF_COMBO relationships for all cards in a combo."""
+def link_cards_to_combo_batch(session: Session, combo_id: str, oracle_ids: list[str]) -> None:
+    """MERGE PART_OF_COMBO relationships for all cards in a combo, matched by oracle_id."""
     session.run(
         """
-        UNWIND $scryfall_ids AS sid
-        MATCH (c:Card {scryfall_id: sid})
+        UNWIND $oracle_ids AS oid
+        MATCH (c:Card {oracle_id: oid})
         MATCH (x:Combo {combo_id: $combo_id})
         MERGE (c)-[:PART_OF_COMBO]->(x)
         """,
         combo_id=combo_id,
-        scryfall_ids=scryfall_ids,
+        oracle_ids=oracle_ids,
     )
 
 
-def link_card_to_combo(session: Session, scryfall_id: str, combo_id: str) -> None:
+def link_card_to_combo(session: Session, oracle_id: str, combo_id: str) -> None:
     """MERGE a single PART_OF_COMBO relationship."""
-    link_cards_to_combo_batch(session, combo_id, [scryfall_id])
+    link_cards_to_combo_batch(session, combo_id, [oracle_id])

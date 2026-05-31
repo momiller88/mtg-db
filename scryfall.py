@@ -85,6 +85,7 @@ def build_card_lookup() -> dict[str, dict]:
 
         lookup[normalize_name(name)] = {
             "scryfall_id": card.get("id"),
+            "oracle_id":   card.get("oracle_id"),
             "mana_cost": card.get("mana_cost"),
             "cmc": card.get("cmc"),
             "type_line": card.get("type_line"),
